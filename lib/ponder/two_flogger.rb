@@ -21,10 +21,7 @@ module Ponder
       @mutex = Mutex.new
       
       unless @pathname.exist?
-        unless @dirpath.directory?
-          FileUtils.mkdir_p @dirpath
-        end
-        
+        FileUtils.mkdir_p @dirpath unless @dirpath.directory?
         File.new(@pathname, 'w+')
       end
       

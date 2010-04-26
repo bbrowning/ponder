@@ -42,21 +42,21 @@ module Ponder
         
         # logger
         if @config.logging
-          @traffic_logger = TwoFlogger.new(Pathname(PONDER_ROOT).join('logs').expand_path, 'traffic.log')
-          @error_logger   = TwoFlogger.new(Pathname(PONDER_ROOT).join('logs').expand_path, 'error.log')
+          @traffic_logger = TwoFlogger.new(Ponder.root.join('logs').expand_path, 'traffic.log')
+          @error_logger   = TwoFlogger.new(Ponder.root.join('logs').expand_path, 'error.log')
         end
       end
     end
     
     def on(type = [:channel], match = //, &block)
       if type.is_a?(Array)
-        callbacks = type.map { |t| Callback.new(t, match, block) }
+        callbacks = type.map { |t| Callback.new(self, t, match, block) }
       else
-        callbacks = [Callback.new(type, match, block)]
+        callbacks = [Callback.new(self, type, match, block)]
       end
       
       callbacks.each do |callback|
-        @callbacks[callback.type] << callback
+        @callbacks[callback.event_type] << callback
       end
     end
     
@@ -96,28 +96,28 @@ module Ponder
         raw message.chomp.gsub('PING', 'PONG')
       
       when /^:\S+ (\d\d\d) /
-        parse_type($1, :type => $1.to_sym, :params => $')
+        parse_event($1, :type => $1.to_sym, :params => $')
       
       when /^:(\S+)!(\S+)@(\S+) PRIVMSG #(\S+) :/
-        parse_type(:channel, :type => :channel, :nick => $1, :user => $2, :host => $3, :channel => "##{$4}", :message => $')
+        parse_event(:channel, :type => :channel, :nick => $1, :user => $2, :host => $3, :channel => "##{$4}", :message => $')
       
       when /^:(\S+)!(\S+)@(\S+) PRIVMSG \S+ :/
-        parse_type(:query, :type => :query, :nick => $1, :user => $2, :host => $3, :message => $')
+        parse_event(:query, :type => :query, :nick => $1, :user => $2, :host => $3, :message => $')
       
       when /^:(\S+)!(\S+)@(\S+) JOIN :*(\S+)$/
-        parse_type(:join, :type => :join, :nick => $1, :user => $2, :host => $3, :channel => $4)
+        parse_event(:join, :type => :join, :nick => $1, :user => $2, :host => $3, :channel => $4)
       
       when /^:(\S+)!(\S+)@(\S+) PART (\S+)/
-        parse_type(:part, :type => :part, :nick => $1, :user => $2, :host => $3, :channel => $4, :message => $'.sub(' :', ''))
+        parse_event(:part, :type => :part, :nick => $1, :user => $2, :host => $3, :channel => $4, :message => $'.sub(' :', ''))
       
       when /^:(\S+)!(\S+)@(\S+) QUIT/
-        parse_type(:quit, :type => :quit, :nick => $1, :user => $2, :host => $3, :message => $'.sub(' :', ''))
+        parse_event(:quit, :type => :quit, :nick => $1, :user => $2, :host => $3, :message => $'.sub(' :', ''))
       
       when /^:(\S+)!(\S+)@(\S+) NICK :/
-        parse_type(:nickchange, :type => :nickchange, :nick => $1, :user => $2, :host => $3, :new_nick => $')
+        parse_event(:nickchange, :type => :nickchange, :nick => $1, :user => $2, :host => $3, :new_nick => $')
       
       when /^:(\S+)!(\S+)@(\S+) KICK (\S+) (\S+) :/
-        parse_type(:kick, :type => :kick, :nick => $1, :user => $2, :host => $3, :channel => $4, :victim => $5, :reason => $')
+        parse_event(:kick, :type => :kick, :nick => $1, :user => $2, :host => $3, :channel => $4, :victim => $5, :reason => $')
       end
       
       if @observers > 0
@@ -145,47 +145,48 @@ module Ponder
     end
     
     # parses incoming traffic (types)
-    def parse_type(type, env = {})
-      case type
+    def parse_event(event_type, event_data = {})
+      case event_type
       # :connect
       when /^376|422$/
         unless @connected
           @connected = true
-          call_callbacks(:connect, env)
+          process_callbacks(:connect, event_data)
         end
       when :query
         # version response
-        if env[:message] == "\001VERSION\001"
-          notice env[:nick], "\001VERSION #{VERSION}\001"
+        if event_data[:message] == "\001VERSION\001"
+          notice event_data[:nick], "\001VERSION #{VERSION}\001"
         end
         
         # time response
-        if env[:message] == "\001TIME\001"
-          notice env[:nick], "\001TIME #{Time.now.strftime('%a %b %d %H:%M:%S %Y')}\001"
+        if event_data[:message] == "\001TIME\001"
+          notice event_data[:nick], "\001TIME #{Time.now.strftime('%a %b %d %H:%M:%S %Y')}\001"
         end
         
         # ping response
-        if env[:message] =~ /\001PING (\d+)\001/
-          notice env[:nick], "\001PING #{$1}\001"
+        if event_data[:message] =~ /\001PING (\d+)\001/
+          notice event_data[:nick], "\001PING #{$1}\001"
         end
-        call_callbacks(type, env)
+        process_callbacks(event_type, event_data)
       else
-        call_callbacks(type, env)
+        process_callbacks(event_type, event_data)
       end
     end
     
-    # calls callbacks with its begin; rescue; end
-    def call_callbacks(type, env)
+    # process callbacks with its begin; rescue; end
+    def process_callbacks(type, event_data)
       @callbacks[type].each do |callback|
-        EM.defer(
-          Proc.new do
+        #EM.defer(
+         # Proc.new do
             begin
-              callback.call(type, env)
+              callback.call(type, event_data)
             rescue => e
+              puts e
               @error_logger.error(e.message, *e.backtrace) if @error_logger
             end
-          end
-        )
+         # end
+        #)
       end
     end
   end
